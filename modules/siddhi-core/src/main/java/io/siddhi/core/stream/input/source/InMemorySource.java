@@ -33,6 +33,9 @@ import io.siddhi.core.util.transport.InMemoryBroker;
 import io.siddhi.core.util.transport.OptionHolder;
 import org.apache.log4j.Logger;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Implementation of {@link Source} to receive events through in-memory transport.
  */
@@ -44,13 +47,15 @@ import org.apache.log4j.Logger;
                 "This provides a way to connect multiple Siddhi Apps deployed under the same Siddhi Manager (JVM). " +
                 "Here both the publisher and subscriber should have the same event schema (stream definition) " +
                 "for successful data transfer.",
-        parameters = @Parameter(name = "topic", type = DataType.STRING,
-                description = "Subscribes to the events sent on the given topic."),
+        parameters = @Parameter(name = "topic.list", type = DataType.STRING,
+                description = "Subscribes to the events sent on the given topics. This list " +
+                        "can be provided as a set of comma-separated values. " +
+                        "e.g., `topic_one,topic_two`"),
         parameterOverloads = {
-                @ParameterOverload(parameterNames = {"topic"})
+                @ParameterOverload(parameterNames = {"topic.list"})
         },
         examples = @Example(
-                syntax = "@source(type='inMemory', topic='Stocks', @map(type='passThrough'))\n" +
+                syntax = "@source(type='inMemory', topics='Stocks', @map(type='passThrough'))\n" +
                         "define stream StocksStream (symbol string, price float, volume long);",
                 description = "Here the `StocksStream` uses inMemory source to consume events published " +
                         "on the topic `Stocks` by the inMemory sinks deployed in the same JVM."
@@ -59,9 +64,11 @@ import org.apache.log4j.Logger;
 
 public class InMemorySource extends Source {
     private static final Logger LOG = Logger.getLogger(InMemorySource.class);
-    private static final String TOPIC_KEY = "topic";
+    private static final String TOPIC_KEY = "topic.list";
+    public static final String HEADER_SEPARATOR = ",";
+    private String topics[];
     private SourceEventListener sourceEventListener;
-    private InMemoryBroker.Subscriber subscriber;
+    private List<InMemoryBroker.Subscriber> subscribers = new ArrayList<>();
 
     @Override
     protected ServiceDeploymentInfo exposeServiceDeploymentInfo() {
@@ -73,18 +80,22 @@ public class InMemorySource extends Source {
                                     String[] requestedTransportPropertyNames, ConfigReader configReader,
                                     SiddhiAppContext siddhiAppContext) {
         this.sourceEventListener = sourceEventListener;
-        String topic = optionHolder.validateAndGetStaticValue(TOPIC_KEY, "input inMemory source");
-        this.subscriber = new InMemoryBroker.Subscriber() {
-            @Override
-            public void onMessage(Object event) {
-                sourceEventListener.onEvent(event, null);
-            }
+        String topicList = optionHolder.validateAndGetStaticValue(TOPIC_KEY, "input inMemory source");
+        topics = topicList.split(HEADER_SEPARATOR);
 
-            @Override
-            public String getTopic() {
-                return topic;
-            }
-        };
+        for (String topic : topics) {
+            this.subscribers.add(new InMemoryBroker.Subscriber() {
+                @Override
+                public void onMessage(Object event) {
+                    sourceEventListener.onEvent(event, null);
+                }
+
+                @Override
+                public String getTopic() {
+                    return topic;
+                }
+            });
+        }
         return null;
     }
 
@@ -95,12 +106,16 @@ public class InMemorySource extends Source {
 
     @Override
     public void connect(ConnectionCallback connectionCallback, State state) throws ConnectionUnavailableException {
-        InMemoryBroker.subscribe(subscriber);
+        for (InMemoryBroker.Subscriber subscriber : subscribers) {
+            InMemoryBroker.subscribe(subscriber);
+        }
     }
 
     @Override
     public void disconnect() {
-        InMemoryBroker.unsubscribe(subscriber);
+        for (InMemoryBroker.Subscriber subscriber : subscribers) {
+            InMemoryBroker.unsubscribe(subscriber);
+        }
     }
 
     @Override
@@ -110,12 +125,16 @@ public class InMemorySource extends Source {
 
     @Override
     public void pause() {
-        InMemoryBroker.unsubscribe(subscriber);
+        for (InMemoryBroker.Subscriber subscriber : subscribers) {
+            InMemoryBroker.unsubscribe(subscriber);
+        }
     }
 
     @Override
     public void resume() {
-        InMemoryBroker.subscribe(subscriber);
+        for (InMemoryBroker.Subscriber subscriber : subscribers) {
+            InMemoryBroker.subscribe(subscriber);
+        }
     }
 
 }
